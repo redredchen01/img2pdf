@@ -16,6 +16,7 @@ polyfill({
 window.addEventListener('touchmove', function () { });
 
 const A4 = "A4", Letter = "US Letter", Fit = "Same as Image", Portrait = "Portrait", Landscape = "Landscape", None = "0", Small = "20", Big = "50";
+const MAX_IMAGES = 300;
 
 class App extends React.Component {
   constructor(props) {
@@ -30,7 +31,8 @@ class App extends React.Component {
       forceShowOption: false,
       compressImages: false,
       imageQuality: 8,
-      busy: false
+      busy: false,
+      imageCountError: undefined
     };
     this.fileInput = React.createRef();
   }
@@ -65,7 +67,7 @@ class App extends React.Component {
 
     const landing = (<div className="landing-page">
       <div style={{ padding: "40px" }}>
-        Convert JPEG or PNG images to PDF without uploading your sensitve data anywhere.
+        Convert JPEG, PNG or WebP images to PDF without uploading your sensitve data anywhere.
       <br />
       Files are processed entirely on your device and does not get uploaded to any server.
       </div>
@@ -279,11 +281,37 @@ class App extends React.Component {
 
     const pageHeader = (<div className="page-header">
       <span>CONVERT IMAGE TO PDF</span>
+      {this.state.images.length > 0 && (
+        <div style={{ 
+          position: "absolute", 
+          right: "20px", 
+          top: "50%", 
+          transform: "translateY(-50%)",
+          fontSize: "14px",
+          color: "rgba(255,255,255,0.8)"
+        }}>
+          {this.state.images.length} / {MAX_IMAGES} 图片
+        </div>
+      )}
     </div>);
+
+    const errorMessage = this.state.imageCountError ? (
+      <div style={{
+        backgroundColor: "#ff4444",
+        color: "white",
+        padding: "10px",
+        textAlign: "center",
+        borderRadius: "4px",
+        margin: "10px"
+      }}>
+        {this.state.imageCountError}
+      </div>
+    ) : null;
 
     if (this.state.images.length < 1) {
       return <div>
         {pageHeader}
+        {errorMessage}
         <input type="file" ref={this.fileInput} onChange={() => this.readfiles(this.fileInput.current.files)} multiple style={{ display: "none" }}></input>
         {landing}
       </div>
@@ -297,6 +325,7 @@ class App extends React.Component {
     return (
       <div style={{ display: "flex", flexDirection: "column", width: "100%", height: "100%", overflow: "hidden", flex: "1" }}>
         {pageHeader}
+        {errorMessage}
         <div style={{ display: "flex", overflow: "hidden", flex: "1" }}>
           <div style={{ display: "flex", flexDirection: "column", width: "100%", flex: "1", overflow: "auto", background: "rgb(240,240,240)" }} onClick={this.clearSelection}>
             {listView}
@@ -305,7 +334,7 @@ class App extends React.Component {
           {options}
         </div>
         {actions}
-        <input type="file" accept={"image/*"} ref={this.fileInput} onChange={() => this.readfiles(this.fileInput.current.files)} multiple style={{ display: "none" }} />
+        <input type="file" accept={"image/*,.webp"} ref={this.fileInput} onChange={() => this.readfiles(this.fileInput.current.files)} multiple style={{ display: "none" }} />
         <div className="busy" style={busy}>Generating PDF, Please wait...</div>
       </div>
 
@@ -365,21 +394,49 @@ class App extends React.Component {
 
   readfiles = async (fileList) => {
     console.log(fileList.length);
+    
+    // 检查是否超过图片数量限制
+    if (this.state.images.length + fileList.length > MAX_IMAGES) {
+      this.setState({ 
+        imageCountError: `无法添加图片。当前已有 ${this.state.images.length} 张图片，最多只能添加 ${MAX_IMAGES} 张图片。` 
+      });
+      setTimeout(() => this.setState({ imageCountError: undefined }), 5000);
+      return;
+    }
+    
     let imgArr = [];
+    let errorCount = 0;
+    
     for (let i = 0; i < fileList.length; i++) {
       console.log("Type: " + fileList[i].type);
-      if (!(fileList[i].type === "image/png" || fileList[i].type === "image/x-png" || fileList[i].type === "image/jpeg")) {
+      if (!(fileList[i].type === "image/png" || fileList[i].type === "image/x-png" || fileList[i].type === "image/jpeg" || fileList[i].type === "image/webp")) {
+        errorCount++;
         continue;
       }
-      const imgDataUrl = window.URL.createObjectURL(fileList[i]);
-      //let img = await this.loadImage(imgDataUrl);
-      let uuid = this.uuidv4();
-      console.log("uuid: " + uuid);
-      imgArr.push({ id: uuid, imgDataUrl, file: fileList[i], /* width: img.width, height: img.height */selected: false });
+      
+      try {
+        const imgDataUrl = window.URL.createObjectURL(fileList[i]);
+        let uuid = this.uuidv4();
+        console.log("uuid: " + uuid);
+        imgArr.push({ id: uuid, imgDataUrl, file: fileList[i], selected: false });
+      } catch (error) {
+        console.error("Error processing file:", fileList[i].name, error);
+        errorCount++;
+      }
     }
-    this.setState((state) => ({
-      images: [...state.images, ...imgArr]
-    }));
+    
+    if (errorCount > 0) {
+      this.setState({ 
+        imageCountError: `有 ${errorCount} 个文件无法处理。请确保只选择 JPEG、PNG 或 WebP 格式的图片。` 
+      });
+      setTimeout(() => this.setState({ imageCountError: undefined }), 5000);
+    }
+    
+    if (imgArr.length > 0) {
+      this.setState((state) => ({
+        images: [...state.images, ...imgArr]
+      }));
+    }
   }
 
   loadImage = (objUrl) => {
@@ -445,9 +502,17 @@ class App extends React.Component {
       ctx.drawImage(img, 0, 0, img.width, img.height);
       let blob = await this.canvasToBlob(canvas, quality);
       let raw = await blob.arrayBuffer();
+      // 获取原始MIME类型，但在压缩情况下默认使用jpeg
+      let originalMime = '';
+      try {
+        let originalRes = await fetch(dataURL);
+        originalMime = originalRes.headers.get('content-type') || '';
+      } catch (e) {
+        console.error('Failed to get original MIME type:', e);
+      }
       return {
         arrayBuffer: raw,
-        mime: "image/jpeg"
+        mime: originalMime || "image/jpeg"
       };
     }
   }
@@ -497,7 +562,34 @@ class App extends React.Component {
           catch (ex) { console.error(ex); }
         }
         //console.log(raw);
-        const img = await (mime === 'image/jpeg' ? pdfDoc.embedJpg(raw) : pdfDoc.embedPng(raw));
+        // 对于WebP图像，我们需要先将其转换为PNG格式再嵌入PDF
+        let embeddedImage;
+        if (mime === 'image/jpeg') {
+          embeddedImage = await pdfDoc.embedJpg(raw);
+        } else if (mime === 'image/webp') {
+          // WebP需要转换为PNG
+          try {
+            // 创建canvas来转换WebP到PNG
+            let img = await this.loadImage(this.state.images[i].imgDataUrl);
+            let canvas = document.createElement('canvas');
+            let ctx = canvas.getContext('2d');
+            canvas.width = img.width;
+            canvas.height = img.height;
+            ctx.drawImage(img, 0, 0);
+            
+            // 转换为PNG数据
+            let pngBlob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+            let pngArrayBuffer = await pngBlob.arrayBuffer();
+            embeddedImage = await pdfDoc.embedPng(pngArrayBuffer);
+          } catch (webpError) {
+            console.error('WebP conversion failed, falling back to direct embedding:', webpError);
+            embeddedImage = await pdfDoc.embedPng(raw);
+          }
+        } else {
+          // 其他情况默认按PNG处理
+          embeddedImage = await pdfDoc.embedPng(raw);
+        }
+        const img = embeddedImage;
 
         console.log("width: " + img.width + " height: " + img.height);
 

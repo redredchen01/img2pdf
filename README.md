@@ -1,4 +1,4 @@
-# CONVERT IMAGE TO PDF
+# CONVERT IMAGE TO PDF ALSO SUPPORT webp
 Image to PDF conversion web app
 
 https://subhra74.github.io/img2pdf/
